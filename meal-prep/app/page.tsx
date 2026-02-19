@@ -1,41 +1,87 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+
+type Mode = "file" | "url";
 
 export default function HomePage() {
+  const [mode, setMode] = useState<Mode>("file");
+
+  // FILE mode
   const [file, setFile] = useState<File | null>(null);
+
+  // URL mode
+  const [url, setUrl] = useState("");
+
+  // Output
   const [text, setText] = useState("");
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(false);
+
+  const canRun = useMemo(() => {
+    if (mode === "file") return !!file;
+    return url.trim().length > 0;
+  }, [mode, file, url]);
 
   async function runTranscribe() {
     setError("");
     setText("");
 
-    if (!file) {
+    if (mode === "file" && !file) {
       setError("Please choose a video/audio file first.");
+      return;
+    }
+
+    if (mode === "url" && !url.trim()) {
+      setError("Please paste an Instagram or TikTok URL.");
       return;
     }
 
     setLoading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
+      let res: Response;
 
-      const res = await fetch("/api/transcribe", {
-        method: "POST",
-        body: fd,
-      });
+      if (mode === "file") {
+        const fd = new FormData();
+        fd.append("file", file!);
+
+        res = await fetch("/api/transcribe", {
+          method: "POST",
+          body: fd,
+        });
+      } else {
+        res = await fetch("/api/transcribe-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: url.trim() }),
+        });
+      }
 
       const raw = await res.text();
       let data: any;
       try {
         data = JSON.parse(raw);
       } catch {
-        throw new Error(`Server returned non-JSON (status ${res.status}):\n${raw.slice(0, 400)}`);
+        throw new Error(
+          `Server returned non-JSON (status ${res.status}):\n${raw.slice(0, 600)}`
+        );
       }
 
-      if (!res.ok) throw new Error(data?.error || "Transcription failed.");
+      if (!res.ok) {
+        const msg =
+          data?.error ||
+          `Transcription failed (status ${res.status}).`;
+
+        // Helpful hint when URL download fails (common for IG/TikTok)
+        if (mode === "url") {
+          throw new Error(
+            msg +
+              `\n\nTip: IG/TikTok links often block downloading unless the post is public. If this fails, download the video yourself and use the Upload mode.`
+          );
+        }
+
+        throw new Error(msg);
+      }
 
       setText(data.text || "");
     } catch (e: any) {
@@ -46,49 +92,152 @@ export default function HomePage() {
   }
 
   return (
-    <main style={{ minHeight: "100vh", padding: 24, background: "#0b0f19", color: "#e5e7eb" }}>
-      <h1 style={{ fontSize: 28, marginBottom: 12 }}>Whisper Transcription MVP</h1>
+    <main
+      style={{
+        minHeight: "100vh",
+        padding: 24,
+        background: "#0b0f19",
+        color: "#e5e7eb",
+        fontFamily:
+          'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
+      }}
+    >
+      <h1 style={{ fontSize: 28, marginBottom: 12 }}>
+        Whisper Transcription MVP
+      </h1>
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-        <input
-          type="file"
-          accept="video/*,audio/*"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          style={{
-            flex: 1,
-            minWidth: 280,
-            padding: 10,
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.14)",
-            background: "rgba(0,0,0,0.25)",
-            color: "#e5e7eb",
-          }}
-        />
-
+      {/* Mode toggle */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
         <button
-          onClick={runTranscribe}
-          disabled={!file || loading}
+          type="button"
+          onClick={() => {
+            setMode("file");
+            setError("");
+            setText("");
+          }}
           style={{
-            padding: "12px 14px",
+            padding: "10px 12px",
             borderRadius: 12,
             border: "1px solid rgba(255,255,255,0.16)",
-            background: "rgba(99,102,241,0.95)",
+            background: mode === "file" ? "rgba(99,102,241,0.95)" : "rgba(255,255,255,0.10)",
             color: "#fff",
             cursor: "pointer",
             fontWeight: 700,
-            opacity: !file || loading ? 0.6 : 1,
           }}
         >
-          {loading ? "Transcribing..." : "Transcribe"}
+          Upload file
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setMode("url");
+            setError("");
+            setText("");
+          }}
+          style={{
+            padding: "10px 12px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,0.16)",
+            background: mode === "url" ? "rgba(99,102,241,0.95)" : "rgba(255,255,255,0.10)",
+            color: "#fff",
+            cursor: "pointer",
+            fontWeight: 700,
+          }}
+        >
+          Paste IG/TikTok URL
         </button>
       </div>
 
-      {file && (
-        <div style={{ marginTop: 10, opacity: 0.8, fontSize: 12 }}>
-          Selected: <b>{file.name}</b> ({Math.round(file.size / 1024 / 1024)} MB)
-        </div>
+      {/* Inputs */}
+      {mode === "file" ? (
+        <>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              type="file"
+              accept="video/*,audio/*"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              style={{
+                flex: 1,
+                minWidth: 280,
+                padding: 10,
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.14)",
+                background: "rgba(0,0,0,0.25)",
+                color: "#e5e7eb",
+              }}
+            />
+
+            <button
+              onClick={runTranscribe}
+              disabled={!canRun || loading}
+              style={{
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.16)",
+                background: "rgba(99,102,241,0.95)",
+                color: "#fff",
+                cursor: "pointer",
+                fontWeight: 700,
+                opacity: !canRun || loading ? 0.6 : 1,
+              }}
+            >
+              {loading ? "Transcribing..." : "Transcribe"}
+            </button>
+          </div>
+
+          {file && (
+            <div style={{ marginTop: 10, opacity: 0.8, fontSize: 12 }}>
+              Selected: <b>{file.name}</b> ({Math.round(file.size / 1024 / 1024)}{" "}
+              MB)
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="Paste Instagram or TikTok URL..."
+              style={{
+                flex: 1,
+                minWidth: 280,
+                padding: 10,
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.14)",
+                background: "rgba(0,0,0,0.25)",
+                color: "#e5e7eb",
+                outline: "none",
+              }}
+            />
+
+            <button
+              onClick={runTranscribe}
+              disabled={!canRun || loading}
+              style={{
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.16)",
+                background: "rgba(99,102,241,0.95)",
+                color: "#fff",
+                cursor: "pointer",
+                fontWeight: 700,
+                opacity: !canRun || loading ? 0.6 : 1,
+              }}
+            >
+              {loading ? "Fetching + Transcribing..." : "Transcribe URL"}
+            </button>
+          </div>
+
+          <div style={{ marginTop: 10, opacity: 0.75, fontSize: 12 }}>
+            Note: URL transcription is best-effort. Many IG/TikTok links block downloads unless the
+            post is public. If it fails, download the video and use Upload mode.
+          </div>
+        </>
       )}
 
+      {/* Error */}
       {error && (
         <div
           style={{
@@ -104,6 +253,7 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* Transcript */}
       <div style={{ marginTop: 18 }}>
         <div style={{ fontWeight: 800, marginBottom: 8 }}>Transcript</div>
         <textarea
@@ -124,7 +274,8 @@ export default function HomePage() {
       </div>
 
       <p style={{ marginTop: 10, opacity: 0.75, fontSize: 12 }}>
-        Make sure Python service is running on <code>http://127.0.0.1:8000</code> (check <code>/health</code>).
+        Make sure Python service is running on{" "}
+        <code>http://127.0.0.1:8000</code> (check <code>/health</code>).
       </p>
     </main>
   );
