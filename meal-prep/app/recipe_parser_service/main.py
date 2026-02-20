@@ -103,3 +103,4 @@ async def parse(transcript: str = Body(embed=True)):
         "ingredients": ingredients,
         "steps": [{"step": i + 1, "instruction": s} for i, s in enumerate(steps)],
     }
+

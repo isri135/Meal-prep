@@ -18,23 +18,39 @@ export default function HomePage() {
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
+  // used to hard-reset the <input type="file"> when needed
+  const [fileInputKey, setFileInputKey] = useState(0);
+
   const canRun = useMemo(() => {
     if (mode === "file") return !!file;
     return url.trim().length > 0;
   }, [mode, file, url]);
 
+  async function safeJson(res: Response) {
+    const raw = await res.text();
+    try {
+      return { ok: res.ok, status: res.status, data: JSON.parse(raw), raw };
+    } catch {
+      // keep ok = res.ok so non-JSON success doesn't look like failure
+      return { ok: res.ok, status: res.status, data: null, raw };
+    }
+  }
+
   async function runTranscribe() {
     setError("");
     setText("");
 
-    if (mode === "file" && !file) {
-      setError("Please choose a video/audio file first.");
-      return;
-    }
-
-    if (mode === "url" && !url.trim()) {
-      setError("Please paste an Instagram or TikTok URL.");
-      return;
+    // ✅ extra guard: make sure mode matches what user provided
+    if (mode === "file") {
+      if (!file) {
+        setError("Please choose a video/audio file first.");
+        return;
+      }
+    } else {
+      if (!url.trim()) {
+        setError("Please paste an Instagram or TikTok URL.");
+        return;
+      }
     }
 
     setLoading(true);
@@ -57,33 +73,27 @@ export default function HomePage() {
         });
       }
 
-      const raw = await res.text();
-      let data: any;
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        throw new Error(
-          `Server returned non-JSON (status ${res.status}):\n${raw.slice(0, 600)}`
-        );
-      }
+      const t = await safeJson(res);
 
-      if (!res.ok) {
-        const msg =
-          data?.error ||
-          `Transcription failed (status ${res.status}).`;
+      if (!t.ok) {
+        const msg = t.data?.error || `Transcription failed (status ${t.status}).`;
 
-        // Helpful hint when URL download fails (common for IG/TikTok)
         if (mode === "url") {
           throw new Error(
             msg +
-              `\n\nTip: IG/TikTok links often block downloading unless the post is public. If this fails, download the video yourself and use the Upload mode.`
+              `\n\nTip: IG/TikTok links often block downloading even for public posts (rate-limits / login checks). If it fails, download the video and use Upload mode.`
           );
         }
 
-        throw new Error(msg);
+        throw new Error(msg + (t.raw ? `\n\n${t.raw.slice(0, 1200)}` : ""));
       }
 
-      setText(data.text || "");
+      const transcript = (t.data?.text ?? t.raw ?? "").toString();
+      setText(transcript);
+
+      if (!transcript.trim()) {
+        throw new Error("Transcription succeeded but returned empty text.");
+      }
     } catch (e: any) {
       setError(e?.message ?? "Unknown error");
     } finally {
@@ -102,9 +112,7 @@ export default function HomePage() {
           'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
       }}
     >
-      <h1 style={{ fontSize: 28, marginBottom: 12 }}>
-        Whisper Transcription MVP
-      </h1>
+      <h1 style={{ fontSize: 28, marginBottom: 12 }}>Whisper Transcription MVP</h1>
 
       {/* Mode toggle */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -112,8 +120,10 @@ export default function HomePage() {
           type="button"
           onClick={() => {
             setMode("file");
+            setUrl("");
             setError("");
             setText("");
+            // keep file as-is; user may have already selected it
           }}
           style={{
             padding: "10px 12px",
@@ -132,6 +142,8 @@ export default function HomePage() {
           type="button"
           onClick={() => {
             setMode("url");
+            setFile(null);
+            setFileInputKey((k) => k + 1); // reset file input UI
             setError("");
             setText("");
           }}
@@ -154,9 +166,15 @@ export default function HomePage() {
         <>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <input
+              key={fileInputKey}
               type="file"
               accept="video/*,audio/*"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                // ✅ force file mode if a file is picked
+                setMode("file");
+                setUrl("");
+                setFile(e.target.files?.[0] ?? null);
+              }}
               style={{
                 flex: 1,
                 minWidth: 280,
@@ -188,8 +206,7 @@ export default function HomePage() {
 
           {file && (
             <div style={{ marginTop: 10, opacity: 0.8, fontSize: 12 }}>
-              Selected: <b>{file.name}</b> ({Math.round(file.size / 1024 / 1024)}{" "}
-              MB)
+              Selected: <b>{file.name}</b> ({Math.round(file.size / 1024 / 1024)} MB)
             </div>
           )}
         </>
@@ -198,7 +215,13 @@ export default function HomePage() {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <input
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                // ✅ force URL mode if user starts typing
+                setMode("url");
+                setFile(null);
+                setFileInputKey((k) => k + 1);
+                setUrl(e.target.value);
+              }}
               placeholder="Paste Instagram or TikTok URL..."
               style={{
                 flex: 1,
@@ -231,8 +254,8 @@ export default function HomePage() {
           </div>
 
           <div style={{ marginTop: 10, opacity: 0.75, fontSize: 12 }}>
-            Note: URL transcription is best-effort. Many IG/TikTok links block downloads unless the
-            post is public. If it fails, download the video and use Upload mode.
+            Note: URL transcription is best-effort. Many IG/TikTok links block downloads even for public posts.
+            If it fails, download the video and use Upload mode.
           </div>
         </>
       )}
@@ -274,8 +297,8 @@ export default function HomePage() {
       </div>
 
       <p style={{ marginTop: 10, opacity: 0.75, fontSize: 12 }}>
-        Make sure Python service is running on{" "}
-        <code>http://127.0.0.1:8000</code> (check <code>/health</code>).
+        Whisper runs through <code>/api/transcribe</code> and <code>/api/transcribe-url</code> → Python{" "}
+        <code>http://127.0.0.1:8001</code> (check <code>/health</code>).
       </p>
     </main>
   );
