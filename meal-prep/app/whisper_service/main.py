@@ -95,12 +95,10 @@ def _is_allowed_domain(url: str) -> bool:
     except Exception:
         return False
 
-    # allow common variants
     allowed = {
         "tiktok.com", "www.tiktok.com", "m.tiktok.com",
         "instagram.com", "www.instagram.com",
     }
-    # also allow subdomains like "vm.tiktok.com"
     return host in allowed or host.endswith(".tiktok.com") or host.endswith(".instagram.com")
 
 def _download_with_ytdlp(url: str, out_dir: str) -> str:
@@ -155,7 +153,8 @@ def _download_with_ytdlp(url: str, out_dir: str) -> str:
 
     return candidates[0]
 
-@app.post("/transcribe_url")
+# ✅ FIX: use hyphen route to match Next.js proxy (/api/transcribe-url -> PY /transcribe-url)
+@app.post("/transcribe-url")
 def transcribe_url(req: UrlReq):
     url = (req.url or "").strip()
     if not url:
