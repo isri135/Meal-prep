@@ -4,6 +4,9 @@ import { useMemo, useState } from "react";
 
 type Mode = "file" | "url";
 
+type ParsedStep = { step: number; instruction: string };
+type ParseResult = { ingredients: string[]; steps: ParsedStep[] };
+
 export default function HomePage() {
   const [mode, setMode] = useState<Mode>("file");
 
@@ -15,6 +18,8 @@ export default function HomePage() {
 
   // Output
   const [text, setText] = useState("");
+  const [parse, setParse] = useState<ParseResult | null>(null);
+
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
@@ -36,9 +41,10 @@ export default function HomePage() {
     }
   }
 
-  async function runTranscribe() {
+  async function runTranscribeAndParse() {
     setError("");
     setText("");
+    setParse(null);
 
     // ✅ extra guard: make sure mode matches what user provided
     if (mode === "file") {
@@ -55,6 +61,7 @@ export default function HomePage() {
 
     setLoading(true);
     try {
+      // 1) TRANSCRIBE (keep your existing behavior)
       let res: Response;
 
       if (mode === "file") {
@@ -94,6 +101,24 @@ export default function HomePage() {
       if (!transcript.trim()) {
         throw new Error("Transcription succeeded but returned empty text.");
       }
+
+      // 2) PARSE RECIPE (NEW)
+      const pRes = await fetch("/api/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript }),
+      });
+
+      const p = await safeJson(pRes);
+      if (!p.ok) {
+        const msg = p.data?.error || `Parsing failed (status ${p.status}).`;
+        throw new Error(msg + (p.raw ? `\n\n${p.raw.slice(0, 1200)}` : ""));
+      }
+
+      setParse({
+        ingredients: Array.isArray(p.data?.ingredients) ? p.data.ingredients : [],
+        steps: Array.isArray(p.data?.steps) ? p.data.steps : [],
+      });
     } catch (e: any) {
       setError(e?.message ?? "Unknown error");
     } finally {
@@ -112,7 +137,9 @@ export default function HomePage() {
           'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
       }}
     >
-      <h1 style={{ fontSize: 28, marginBottom: 12 }}>Whisper Transcription MVP</h1>
+      <h1 style={{ fontSize: 28, marginBottom: 12 }}>
+        Whisper → Recipe Parser MVP
+      </h1>
 
       {/* Mode toggle */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -123,6 +150,7 @@ export default function HomePage() {
             setUrl("");
             setError("");
             setText("");
+            setParse(null);
             // keep file as-is; user may have already selected it
           }}
           style={{
@@ -146,6 +174,7 @@ export default function HomePage() {
             setFileInputKey((k) => k + 1); // reset file input UI
             setError("");
             setText("");
+            setParse(null);
           }}
           style={{
             padding: "10px 12px",
@@ -173,6 +202,7 @@ export default function HomePage() {
                 // ✅ force file mode if a file is picked
                 setMode("file");
                 setUrl("");
+                setParse(null);
                 setFile(e.target.files?.[0] ?? null);
               }}
               style={{
@@ -187,7 +217,7 @@ export default function HomePage() {
             />
 
             <button
-              onClick={runTranscribe}
+              onClick={runTranscribeAndParse}
               disabled={!canRun || loading}
               style={{
                 padding: "12px 14px",
@@ -200,7 +230,7 @@ export default function HomePage() {
                 opacity: !canRun || loading ? 0.6 : 1,
               }}
             >
-              {loading ? "Transcribing..." : "Transcribe"}
+              {loading ? "Transcribing + Parsing..." : "Run"}
             </button>
           </div>
 
@@ -220,6 +250,7 @@ export default function HomePage() {
                 setMode("url");
                 setFile(null);
                 setFileInputKey((k) => k + 1);
+                setParse(null);
                 setUrl(e.target.value);
               }}
               placeholder="Paste Instagram or TikTok URL..."
@@ -236,7 +267,7 @@ export default function HomePage() {
             />
 
             <button
-              onClick={runTranscribe}
+              onClick={runTranscribeAndParse}
               disabled={!canRun || loading}
               style={{
                 padding: "12px 14px",
@@ -249,7 +280,7 @@ export default function HomePage() {
                 opacity: !canRun || loading ? 0.6 : 1,
               }}
             >
-              {loading ? "Fetching + Transcribing..." : "Transcribe URL"}
+              {loading ? "Fetching + Transcribing + Parsing..." : "Run URL"}
             </button>
           </div>
 
@@ -285,7 +316,7 @@ export default function HomePage() {
           placeholder="Transcript will appear here..."
           style={{
             width: "100%",
-            minHeight: 260,
+            minHeight: 220,
             padding: 12,
             borderRadius: 12,
             border: "1px solid rgba(255,255,255,0.14)",
@@ -296,9 +327,71 @@ export default function HomePage() {
         />
       </div>
 
+      {/* Parsed Recipe */}
+      <div style={{ marginTop: 18 }}>
+        <div style={{ fontWeight: 800, marginBottom: 8 }}>Parsed Recipe</div>
+
+        {!parse ? (
+          <div style={{ opacity: 0.75, fontSize: 12 }}>
+            Ingredients and steps will appear here after parsing.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+            {/* Ingredients */}
+            <div
+              style={{
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.14)",
+                background: "rgba(0,0,0,0.22)",
+                padding: 12,
+              }}
+            >
+              <div style={{ fontWeight: 800, marginBottom: 8 }}>
+                Ingredients ({parse.ingredients.length})
+              </div>
+
+              {parse.ingredients.length === 0 ? (
+                <div style={{ opacity: 0.75, fontSize: 12 }}>No ingredients detected.</div>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+                  {parse.ingredients.map((ing) => (
+                    <li key={ing}>{ing}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Steps */}
+            <div
+              style={{
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.14)",
+                background: "rgba(0,0,0,0.22)",
+                padding: 12,
+              }}
+            >
+              <div style={{ fontWeight: 800, marginBottom: 8 }}>
+                Steps ({parse.steps.length})
+              </div>
+
+              {parse.steps.length === 0 ? (
+                <div style={{ opacity: 0.75, fontSize: 12 }}>No steps detected.</div>
+              ) : (
+                <ol style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+                  {parse.steps.map((s) => (
+                    <li key={`${s.step}-${s.instruction}`}>{s.instruction}</li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
       <p style={{ marginTop: 10, opacity: 0.75, fontSize: 12 }}>
         Whisper runs through <code>/api/transcribe</code> and <code>/api/transcribe-url</code> → Python{" "}
-        <code>http://127.0.0.1:8001</code> (check <code>/health</code>).
+        <code>http://127.0.0.1:8001</code>. Parser runs through <code>/api/parse</code> →{" "}
+        <code>http://127.0.0.1:8000/parse</code>.
       </p>
     </main>
   );
